@@ -144,8 +144,6 @@ def train(args):
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     curr_lr = args.lr
     e = args.epochs
-    loss_history = np.empty(e)
-    index = np.arange(e)
     
     for epoch in range(e):
         model.train()
@@ -166,13 +164,7 @@ def train(args):
             )
         if (epoch+1) % args.test_interval == 0:
             results = triple_test(model, test_loader, augment, 10, device)
-            logger.info(
-                "UA {:.4f}, A {:.4f}, AVG {:.4f}".format( results[0], results[1], results[2] )
-            )
-    
-    plt.plot(index+1, loss_history, c="red")
-    plt.grid()
-    print(loss_history[e-1])
+            logger.info( "UA {:.4f}, A {:.4f}, AVG {:.4f}".format( results[0], results[1], results[2] ) )
     
     save_model(model, args.model_dir)
 
@@ -194,7 +186,7 @@ if __name__ == "__main__":
     parser.add_argument('--arch', type=str, default='resnet18', choices=['resnet18'])
     parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10'], help='...')
     parser.add_argument("--batch_size", type=int, default=128, metavar="N", help="training batch size")
-    parser.add_argument('--epochs', type=int, default=200, metavar="N", help='number of training epochs')
+    parser.add_argument('--epochs', type=int, default=1, metavar="N", help='number of training epochs')
     parser.add_argument('--lr', type=float, default=0.1, metavar="LR", help='learning rate')
     parser.add_argument('--momentum', type=float, default=0.9, metavar="M", help='SGD momentum')
     parser.add_argument('--weight_decay', type=float, default=1e-4, metavar="W", help='weight decay')
@@ -209,3 +201,4 @@ if __name__ == "__main__":
     parser.add_argument("--num_gpus", type=int, default=os.environ["SM_NUM_GPUS"])
     
     train(parser.parse_args())
+    
