@@ -145,8 +145,6 @@ def train(args):
     model = load_arch(args).to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay_t)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, args.lr, epochs=e, steps_per_epoch=len(train_loader))
-    loss_history = np.empty(e)
-    index = np.arange(e)
     
     for epoch in range(e):
         model.train()
@@ -157,8 +155,6 @@ def train(args):
             loss.backward()
             optimizer.step()
             scheduler.step()
-            
-        loss_history[epoch] = loss.item()
         
         if (epoch+1) % args.loss_interval == 0:
             logger.info(
@@ -170,11 +166,6 @@ def train(args):
             logger.info(
                 "UA {:.4f}, A {:.4f}, AVG {:.4f}".format( results[0], results[1], results[2] )
             )
-    
-    plt.plot(index+1, loss_history, c="red")
-    plt.grid()
-    print(loss_history[e-1])
-    plt.show()
     
     train_loader = ds.train_loader
     teacher_dict = model.state_dict()
@@ -202,8 +193,6 @@ def train(args):
                    ( (1 - a)*nn.CrossEntropyLoss()(model(images), labels) )
             loss.backward()
             optimizer.step()
-            
-        loss_history[epoch] = loss.item()
         
         if ( (epoch+1) == 140 ) or ( (epoch+1) == 180 ):
             curr_lr *= 0.1
@@ -218,13 +207,8 @@ def train(args):
             logger.info(
                 "UA {:.4f}, A {:.4f}".format( results[0], results[1] )
             )
-        
-    plt.plot(index+1, loss_history, c="red")
-    plt.grid()
-    print(loss_history[e-1])
-    plt.show()
-    
-    #save_model(model, args.model_dir)
+
+    save_model(model, args.model_dir)
 
 def model_fn(model_dir):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -243,8 +227,8 @@ if __name__ == "__main__":
     
     parser.add_argument('--arch', type=str, default='resnet18', choices=['resnet18'])
     parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10'], help='...')
-    parser.add_argument("--batch_size", type=int, default=128, metavar="N", help="training batch size")
-    parser.add_argument('--epochs', type=int, default=200, metavar="N", help='number of training epochs')
+    parser.add_argument("--batch_size", type=int, default=256, metavar="N", help="training batch size")
+    parser.add_argument('--epochs', type=int, default=1, metavar="N", help='number of training epochs')
     parser.add_argument('--lr', type=float, default=0.1, metavar="LR", help='learning rate')
     parser.add_argument('--momentum', type=float, default=0.9, metavar="M", help='SGD momentum')
     parser.add_argument('--weight_decay_t', type=float, default=1e-3, metavar="W", help='weight decay')
