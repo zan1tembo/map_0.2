@@ -20,15 +20,72 @@ logger.addHandler(logging.StreamHandler(sys.stdout))
 
 # # # MODELS # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
-class ResNet18(nn.Module):
-        def __init__(self, classes):
-                super().__init__()
-                self.network = torchvision.models.resnet18()
-                num_ftrs = self.network.fc.in_features
-                self.network.fc = nn.Linear(num_ftrs, classes)
-        
-        def forward(self, x):
-                return self.network(x)
+# 3x3 convolution
+def conv3x3(in_channels, out_channels, stride=1):
+    return nn.Conv2d(in_channels, out_channels, kernel_size=3,
+                     stride=stride, padding=1, bias=False)
+# Residual block
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = conv3x3(in_channels, out_channels, stride)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = conv3x3(out_channels, out_channels)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.downsample = downsample
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        if self.downsample:
+            residual = self.downsample(x)
+        out += residual
+        out = self.relu(out)
+        return out
+    
+# ResNet
+class ResNet(nn.Module):
+    def __init__(self, block, layers, num_classes=10):
+        super(ResNet, self).__init__()
+        self.in_channels = 16
+        self.conv = conv3x3(3, 16)
+        self.bn = nn.BatchNorm2d(16)
+        self.relu = nn.ReLU(inplace=True)
+        self.layer1 = self.make_layer(block, 16, layers[0])
+        self.layer2 = self.make_layer(block, 32, layers[1], 2)
+        self.layer3 = self.make_layer(block, 64, layers[2], 2)
+        self.avg_pool = nn.AvgPool2d(8)
+        self.fc = nn.Linear(64, num_classes)
+
+    def make_layer(self, block, out_channels, blocks, stride=1):
+        downsample = None
+        if (stride != 1) or (self.in_channels != out_channels):
+            downsample = nn.Sequential(
+                conv3x3(self.in_channels, out_channels, stride=stride),
+                nn.BatchNorm2d(out_channels))
+        layers = []
+        layers.append(block(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels
+        for i in range(1, blocks):
+            layers.append(block(out_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = self.conv(x)
+        out = self.bn(out)
+        out = self.relu(out)
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.avg_pool(out)
+        out = out.view(out.size(0), -1)
+        out = self.fc(out)
+        return out
             
 # # # LIBRARY # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -127,7 +184,7 @@ def load_data(args):
     
 def load_arch(args):
     if args.arch == 'resnet18':
-        return ResNet18(10)
+        return ResNet(ResidualBlock, [2, 2, 2])
         
 def train(args):
 
@@ -140,10 +197,11 @@ def train(args):
     ds = load_data(args)
     train_loader = ds.train_loader
     test_loader = ds.test_loader
+    
     model = load_arch(args).to(device)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    curr_lr = args.lr
     e = args.epochs
+    curr_lr = args.lr
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     
     for epoch in range(e):
         model.train()
@@ -153,18 +211,15 @@ def train(args):
             loss = nn.CrossEntropyLoss()(model(images), labels)
             loss.backward()
             optimizer.step()
-        
-        if ( (epoch+1) == 140 ) or ( (epoch+1) == 180 ):
+
+        if ( (epoch+1) == 100 ) or ( (epoch+1) == 150 ):
             curr_lr *= 0.1
             update_lr(optimizer, curr_lr)
         if (epoch+1) % args.loss_interval == 0:
-            logger.info(
-                "Epoch [{}/{}], Step [{}/{}], LR: {:.4f}, Loss: {:.4f}".format( epoch+1, e, i+1, len(train_loader),
-                                                                                scheduler.get_last_lr()[0], loss.item() )
-            )
+            logger.info( "Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}".format( epoch+1, e, i+1, len(train_loader), loss.item() ) )
         if (epoch+1) % args.test_interval == 0:
-            results = triple_test(model, test_loader, augment, 10, device)
-            logger.info( "UA {:.4f}, A {:.4f}, AVG {:.4f}".format( results[0], results[1], results[2] ) )
+            results = double_test(model, test_loader, augment, device)
+            logger.info( "Student: UA {:.4f}, A {:.4f}".format( results[0], results[1] ) )
     
     save_model(model, args.model_dir)
 
@@ -185,12 +240,12 @@ if __name__ == "__main__":
     
     parser.add_argument('--arch', type=str, default='resnet18', choices=['resnet18'])
     parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10'], help='...')
-    parser.add_argument("--batch_size", type=int, default=128, metavar="N", help="training batch size")
-    parser.add_argument('--epochs', type=int, default=1, metavar="N", help='number of training epochs')
+    parser.add_argument("--batch_size", type=int, default=256, metavar="N", help="training batch size")
+    parser.add_argument('--epochs', type=int, default=200, metavar="N", help='number of training epochs')
     parser.add_argument('--lr', type=float, default=0.1, metavar="LR", help='learning rate')
     parser.add_argument('--momentum', type=float, default=0.9, metavar="M", help='SGD momentum')
-    parser.add_argument('--weight_decay', type=float, default=1e-4, metavar="W", help='weight decay')
-    parser.add_argument('--loss_interval', type=int, default=1, metavar="N", help='loss printing interval')
+    parser.add_argument('--weight_decay', type=float, default=5e-4, metavar="W", help='weight decay')
+    parser.add_argument('--loss_interval', type=int, default=5, metavar="N", help='loss printing interval')
     parser.add_argument('--test_interval', type=int, default=25, metavar="N", help='test run interval')
     
     # Container environment
@@ -201,4 +256,3 @@ if __name__ == "__main__":
     parser.add_argument("--num_gpus", type=int, default=os.environ["SM_NUM_GPUS"])
     
     train(parser.parse_args())
-    
